@@ -13,45 +13,41 @@ from sklearn.preprocessing import PowerTransformer
 from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_log_error,
+    max_error,
     d2_absolute_error_score
 )
 
 
-# ============================================================
-# CONFIG
-# ============================================================
-FILE_PATH = "netflix_titles.csv"
-
+FILE_PATH = "netflix_titles.csv"   # зміни шлях, якщо треба
 TARGET_COLUMN = "release_year"
 
 TEST_SIZE = 0.2
 RANDOM_STATE = 42
-
 STRONG_CORR_THRESHOLD = 0.85
-RIDGE_ALPHAS = [1.0, 10.0, 100.0]
+
+# default Ridge + 2 довільні alpha
+RIDGE_MODELS = [
+    ("Ridge_default", Ridge()),
+    ("Ridge_alpha_10", Ridge(alpha=10.0)),
+    ("Ridge_alpha_100", Ridge(alpha=100.0)),
+]
 
 sns.set_theme(style="whitegrid", context="notebook")
-plt.rcParams["figure.figsize"] = (10, 6)
+plt.rcParams["figure.figsize"] = (11, 6)
 
 
-# ============================================================
-# ДОПОМІЖНІ ФУНКЦІЇ
-# ============================================================
 def print_title(title: str):
-    print("\n" + "=" * 110)
+    print("\n" + "=" * 120)
     print(title)
-    print("=" * 110)
-
+    print("=" * 120)
 
 def print_conclusion(text: str):
-    print(f"Висновок: {text}\n")
-
+    print(f"\nВисновок: {text}\n")
 
 def save_plot(filename: str):
     plt.tight_layout()
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     print(f"Графік збережено: {filename}")
-
 
 def check_required_columns(df: pd.DataFrame, required_columns: list):
     missing = [col for col in required_columns if col not in df.columns]
@@ -61,17 +57,15 @@ def check_required_columns(df: pd.DataFrame, required_columns: list):
             f"Наявні колонки: {list(df.columns)}"
         )
 
-
 def safe_msle(y_true, y_pred):
     y_true_clip = np.clip(np.asarray(y_true), 0, None)
     y_pred_clip = np.clip(np.asarray(y_pred), 0, None)
     return mean_squared_log_error(y_true_clip, y_pred_clip)
 
-
 def parse_duration_minutes(duration_value: str) -> float:
     """
     Для Movie: '90 min' -> 90
-    Для TV Show: не хвилини, тому NaN
+    Для TV Show: NaN
     """
     if pd.isna(duration_value):
         return np.nan
@@ -80,7 +74,6 @@ def parse_duration_minutes(duration_value: str) -> float:
     if match:
         return float(match.group(1))
     return np.nan
-
 
 def parse_seasons(duration_value: str) -> float:
     """
@@ -95,17 +88,21 @@ def parse_seasons(duration_value: str) -> float:
         return float(match.group(1))
     return np.nan
 
-
 def count_items(cell_value: str) -> int:
     """
     Підрахунок елементів у рядку, розділених комами.
     """
-    if pd.isna(cell_value) or str(cell_value).strip() == "":
+    if pd.isna(cell_value):
         return 0
-    return len([item.strip() for item in str(cell_value).split(",") if item.strip()])
-
+    text = str(cell_value).strip()
+    if text == "" or text.lower() == "nan":
+        return 0
+    return len([item.strip() for item in text.split(",") if item.strip()])
 
 def remove_outliers_iqr(df: pd.DataFrame, columns: list) -> pd.DataFrame:
+    """
+    Послідовне видалення аномалій методом IQR по кожній колонці.
+    """
     result = df.copy()
     for col in columns:
         q1 = result[col].quantile(0.25)
@@ -116,8 +113,10 @@ def remove_outliers_iqr(df: pd.DataFrame, columns: list) -> pd.DataFrame:
         result = result[(result[col] >= lower) & (result[col] <= upper)]
     return result.copy()
 
-
 def choose_features_by_correlation(corr_matrix: pd.DataFrame, target: str, threshold: float = 0.85):
+    """
+    Обирає ознаки, прибираючи ті, що дуже сильно корелюють між собою.
+    """
     ordered = (
         corr_matrix[target]
         .drop(target)
@@ -139,7 +138,6 @@ def choose_features_by_correlation(corr_matrix: pd.DataFrame, target: str, thres
 
     return selected
 
-
 def evaluate_regression(model, X_train, X_test, y_train, y_test):
     y_pred_train = model.predict(X_train)
     y_pred_test = model.predict(X_test)
@@ -158,6 +156,10 @@ def evaluate_regression(model, X_train, X_test, y_train, y_test):
                 safe_msle(y_train, y_pred_train),
                 safe_msle(y_test, y_pred_test)
             ],
+            "MaxError": [
+                max_error(y_train, y_pred_train),
+                max_error(y_test, y_pred_test)
+            ],
             "D2_absolute_error": [
                 d2_absolute_error_score(y_train, y_pred_train),
                 d2_absolute_error_score(y_test, y_pred_test)
@@ -168,8 +170,10 @@ def evaluate_regression(model, X_train, X_test, y_train, y_test):
 
     return metrics_df, y_pred_train, y_pred_test
 
-
 def transform_xy_power(X_train, X_test, y_train, y_test):
+    """
+    Перетворення усіх змінних до розподілу, близького до нормального.
+    """
     x_transformer = PowerTransformer(method="yeo-johnson", standardize=True)
     y_transformer = PowerTransformer(method="yeo-johnson", standardize=True)
 
@@ -184,15 +188,17 @@ def transform_xy_power(X_train, X_test, y_train, y_test):
 
     return X_train_t, X_test_t, y_train_t, y_test_t, x_transformer, y_transformer
 
-
 def inverse_target_predictions(y_pred_transformed, y_transformer):
     return y_transformer.inverse_transform(
         np.asarray(y_pred_transformed).reshape(-1, 1)
     ).ravel()
 
-
 def evaluate_transformed_model(model, X_train_t, X_test_t, y_train_t, y_test_t,
                                y_train_original, y_test_original, y_transformer):
+    """
+    .score рахується в трансформованому просторі (бо так працює модель),
+    а абсолютні метрики — в оригінальному масштабі цільової змінної.
+    """
     y_pred_train_t = model.predict(X_train_t)
     y_pred_test_t = model.predict(X_test_t)
 
@@ -213,6 +219,10 @@ def evaluate_transformed_model(model, X_train_t, X_test_t, y_train_t, y_test_t,
                 safe_msle(y_train_original, y_pred_train),
                 safe_msle(y_test_original, y_pred_test)
             ],
+            "MaxError": [
+                max_error(y_train_original, y_pred_train),
+                max_error(y_test_original, y_pred_test)
+            ],
             "D2_absolute_error": [
                 d2_absolute_error_score(y_train_original, y_pred_train),
                 d2_absolute_error_score(y_test_original, y_pred_test)
@@ -222,7 +232,6 @@ def evaluate_transformed_model(model, X_train_t, X_test_t, y_train_t, y_test_t,
     )
 
     return metrics_df, y_pred_train, y_pred_test
-
 
 def plot_predictions_scatter(
     X_train_feature,
@@ -236,17 +245,31 @@ def plot_predictions_scatter(
     title: str,
     filename: str
 ):
-    plt.figure(figsize=(10, 6))
+    """
+    В одній системі координат:
+    - точки train actual
+    - точки test actual
+    - лінія train prediction
+    - лінія test prediction
+    """
+    plt.figure(figsize=(11, 6))
+
+    X_train_feature = np.asarray(X_train_feature)
+    X_test_feature = np.asarray(X_test_feature)
+    y_train = np.asarray(y_train)
+    y_test = np.asarray(y_test)
+    y_pred_train = np.asarray(y_pred_train)
+    y_pred_test = np.asarray(y_pred_test)
 
     plt.scatter(
         X_train_feature, y_train,
-        alpha=0.6,
+        alpha=0.65,
         label="Train actual",
         marker="o"
     )
     plt.scatter(
         X_test_feature, y_test,
-        alpha=0.6,
+        alpha=0.65,
         label="Test actual",
         marker="s"
     )
@@ -255,14 +278,14 @@ def plot_predictions_scatter(
     sort_idx_test = np.argsort(X_test_feature)
 
     plt.plot(
-        np.array(X_train_feature)[sort_idx_train],
-        np.array(y_pred_train)[sort_idx_train],
+        X_train_feature[sort_idx_train],
+        y_pred_train[sort_idx_train],
         linewidth=2,
         label="Train prediction"
     )
     plt.plot(
-        np.array(X_test_feature)[sort_idx_test],
-        np.array(y_pred_test)[sort_idx_test],
+        X_test_feature[sort_idx_test],
+        y_pred_test[sort_idx_test],
         linewidth=2,
         linestyle="--",
         label="Test prediction"
@@ -276,17 +299,19 @@ def plot_predictions_scatter(
     save_plot(filename)
     plt.show()
 
+def add_metrics_to_list(storage_list, experiment_name, metrics_df):
+    for split_name, row in metrics_df.iterrows():
+        storage_list.append({
+            "experiment": experiment_name,
+            "split": split_name,
+            **row.to_dict()
+        })
 
-# ============================================================
-# 1.1 ВИБІР ТА ЗАВАНТАЖЕННЯ НАБОРУ ДАНИХ
-# ============================================================
+
 print_title("1.1 ВИБІР ТА ЗАВАНТАЖЕННЯ НАБОРУ ДАНИХ")
 
 df = pd.read_csv(FILE_PATH)
 df.columns = df.columns.str.strip()
-
-print("Перші 5 рядків датасету:")
-print(df.head())
 
 required_columns = [
     "show_id", "type", "title", "director", "cast", "country",
@@ -295,18 +320,18 @@ required_columns = [
 ]
 check_required_columns(df, required_columns)
 
+print("Перші 5 рядків датасету:")
+print(df.head())
+
 print("\nРозмір датасету:", df.shape)
 print("\nКолонки датасету:")
 print(df.columns.tolist())
 
 print_conclusion(
-    "Датасет Netflix успішно завантажено. Цільовою змінною для регресії буде рік випуску фільму або серіалу."
+    "Датасет успішно завантажено. Він містить 8807 рядків, що задовольняє вимогу лабораторної щодо кількості спостережень."
 )
 
 
-# ============================================================
-# 1.2 БАЗОВА ПІДГОТОВКА ДАНИХ
-# ============================================================
 print_title("1.2 БАЗОВА ПІДГОТОВКА ДАНИХ")
 
 # Базове очищення тексту
@@ -314,13 +339,14 @@ text_columns = [
     "show_id", "type", "title", "director", "cast", "country",
     "date_added", "rating", "duration", "listed_in", "description"
 ]
+
 for col in text_columns:
     df[col] = df[col].astype(str).str.strip()
 
-# Приведення release_year
+# Приведення типу цілі
 df["release_year"] = pd.to_numeric(df["release_year"], errors="coerce")
 
-# Ознаки
+# Створення числових ознак
 df["duration_minutes"] = df["duration"].apply(parse_duration_minutes)
 df["seasons_count"] = df["duration"].apply(parse_seasons)
 df["cast_count"] = df["cast"].apply(count_items)
@@ -330,14 +356,16 @@ df["director_count"] = df["director"].apply(count_items)
 df["title_length"] = df["title"].astype(str).str.len()
 df["description_length"] = df["description"].astype(str).str.len()
 df["is_movie"] = (df["type"].str.lower() == "movie").astype(int)
-df["has_director"] = (df["director"].astype(str).str.strip() != "").astype(int)
+df["has_director"] = (
+    df["director"].astype(str).str.strip().replace("nan", "") != ""
+).astype(int)
 
-# Дата додавання
+# Розбір дати додавання
 df["date_added_parsed"] = pd.to_datetime(df["date_added"], errors="coerce")
 df["date_added_year"] = df["date_added_parsed"].dt.year
 df["date_added_month"] = df["date_added_parsed"].dt.month
 
-# Вибір числових колонок
+# Від 5 до 10 числових ознак
 candidate_features = [
     "duration_minutes",
     "seasons_count",
@@ -347,40 +375,37 @@ candidate_features = [
     "director_count",
     "title_length",
     "description_length",
-    "is_movie",
-    "has_director",
     "date_added_year",
     "date_added_month"
 ]
 
-# Заповнення пропусків
+print("Вибрані числові ознаки:")
+print(candidate_features)
+print("Кількість вибраних числових ознак:", len(candidate_features))
+
+# Обробка пропусків
 for col in [TARGET_COLUMN] + candidate_features:
     if df[col].isna().sum() > 0:
         df[col] = df[col].fillna(df[col].median())
 
-print("Кількість пропусків після обробки:")
+print("\nКількість пропусків після обробки:")
 print(df[[TARGET_COLUMN] + candidate_features].isna().sum())
 
-# Для регресії беремо лише числові ознаки
+# Модельний датафрейм
 df_model = df[[TARGET_COLUMN] + candidate_features].copy()
 
-# Видалення аномалій
+print("\nРозмір до видалення аномалій:", df_model.shape)
 df_model = remove_outliers_iqr(df_model, [TARGET_COLUMN] + candidate_features)
-
-print("\nРозмір датасету після відбору числових полів і видалення аномалій:")
-print(df_model.shape)
+print("Розмір після видалення аномалій:", df_model.shape)
 
 print_conclusion(
-    "Для моделювання сформовано числові ознаки з текстових полів: тривалість, кількість сезонів, кількість акторів, жанрів, країн, режисерів і довжини текстів."
+    "Для моделювання сформовано 10 числових ознак. Пропуски заповнено медіаною, а аномалії видалено методом IQR."
 )
 
 
-# ============================================================
-# 1.3 ЗНАХОДЖЕННЯ ЗАЛЕЖНОСТЕЙ
-# ============================================================
 print_title("1.3 ЗНАХОДЖЕННЯ ЗАЛЕЖНОСТЕЙ")
 
-corr_matrix = df_model.corr()
+corr_matrix = df_model.corr(numeric_only=True)
 
 ordered_corr = (
     corr_matrix[TARGET_COLUMN]
@@ -388,7 +413,7 @@ ordered_corr = (
     .sort_values(key=np.abs, ascending=False)
 )
 
-plt.figure(figsize=(11, 8))
+plt.figure(figsize=(12, 8))
 sns.heatmap(
     corr_matrix.loc[[TARGET_COLUMN] + ordered_corr.index.tolist(),
                     [TARGET_COLUMN] + ordered_corr.index.tolist()],
@@ -399,8 +424,8 @@ sns.heatmap(
     vmax=1,
     linewidths=0.5
 )
-plt.title("Матриця кореляцій для числових ознак Netflix")
-save_plot("lab3_netflix_corr_heatmap.png")
+plt.title("Матриця кореляцій для числових ознак")
+save_plot("lab3_corr_heatmap.png")
 plt.show()
 
 print("Ознаки у порядку сили зв'язку із цільовою змінною:")
@@ -413,7 +438,6 @@ selected_features = choose_features_by_correlation(
     STRONG_CORR_THRESHOLD
 )
 
-# Щоб було 5-10 ознак, як вимагає лабораторна
 if len(selected_features) > 10:
     selected_features = selected_features[:10]
 
@@ -427,29 +451,30 @@ if len(selected_features) < 5:
 print("\nОзнаки після усунення сильної взаємної кореляції:")
 print(selected_features)
 
-X = df_model[selected_features].copy()
+# Для простих моделей беремо одну найбільш пов'язану ознаку
+most_related_feature = ordered_corr.index[0]
+print(f"\nНайбільш пов'язана ознака з цільовою змінною: {most_related_feature}")
+
+# simple linear regression -> одна ознака
+X_simple = df_model[[most_related_feature]].copy()
 y = df_model[TARGET_COLUMN].copy()
 
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y,
+    X_simple, y,
     test_size=TEST_SIZE,
     random_state=RANDOM_STATE
 )
 
-most_related_feature = ordered_corr.index[0]
-
-print(f"\nНайбільш пов'язана ознака з цільовою змінною: {most_related_feature}")
 print(f"Train shape: {X_train.shape}")
 print(f"Test shape: {X_test.shape}")
 
 print_conclusion(
-    "Сильною кореляцією між ознаками у цій роботі вважаємо |r| ≥ 0.85. Для train/test використано поділ 80/20, що є раціональним для великого датасету."
+    f"Сильною кореляцією у роботі вважаємо |r| ≥ {STRONG_CORR_THRESHOLD}. "
+    f"Для train/test використано поділ 80/20. "
+    f"Для простої регресії використано одну ознаку: {most_related_feature}."
 )
 
 
-# ============================================================
-# 2.1 ПРОСТА ЛІНІЙНА РЕГРЕСІЯ
-# ============================================================
 print_title("2.1 ПРОСТА ЛІНІЙНА РЕГРЕСІЯ")
 
 linreg = LinearRegression()
@@ -471,19 +496,15 @@ plot_predictions_scatter(
     linreg_pred_test,
     feature_name=most_related_feature,
     target_name=TARGET_COLUMN,
-    title="LinearRegression: реальні значення і прогнози",
-    filename="lab3_netflix_linear_scatter.png"
+    title="2.1 LinearRegression: реальні значення і прогнози",
+    filename="lab3_linear_scatter.png"
 )
 
 print_conclusion(
-    "Базова лінійна регресія показує, наскільки добре побудовані числові ознаки пояснюють рік випуску контенту."
+    "Побудовано просту лінійну регресію на одній найсильніше пов'язаній ознаці."
 )
 
-
-# ============================================================
-# 2.2 ЛІНІЙНА РЕГРЕСІЯ З ПЕРЕТВОРЕННЯМ ЗМІННИХ
-# ============================================================
-print_title("2.2 ЛІНІЙНА РЕГРЕСІЯ З ПЕРЕТВОРЕННЯМ ЗМІННИХ")
+print_title("2.2 ПРОСТА ЛІНІЙНА РЕГРЕСІЯ З ПЕРЕТВОРЕННЯМ ЗМІННИХ")
 
 X_train_t, X_test_t, y_train_t, y_test_t, x_pt, y_pt = transform_xy_power(
     X_train, X_test, y_train, y_test
@@ -510,26 +531,21 @@ plot_predictions_scatter(
     linreg_t_pred_test,
     feature_name=most_related_feature,
     target_name=TARGET_COLUMN,
-    title="LinearRegression + transform: реальні значення і прогнози",
-    filename="lab3_netflix_linear_transform_scatter.png"
+    title="2.2 LinearRegression + transform: реальні значення і прогнози",
+    filename="lab3_linear_transform_scatter.png"
 )
 
 print_conclusion(
-    "Перетворення Yeo-Johnson приводить розподіли змінних ближче до нормальних і може змінити якість моделі."
+    "Перед побудовою моделі виконано перетворення X та y методом Yeo-Johnson."
 )
 
 
-# ============================================================
-# 2.3 ГРЕБЕНЕВА РЕГРЕСІЯ
-# ============================================================
 print_title("2.3 ГРЕБЕНЕВА РЕГРЕСІЯ")
 
 ridge_metrics_all = {}
 ridge_predictions = {}
 
-for alpha in RIDGE_ALPHAS:
-    model_name = f"Ridge_alpha_{alpha}"
-    model = Ridge(alpha=alpha)
+for model_name, model in RIDGE_MODELS:
     model.fit(X_train, y_train)
 
     metrics_df, pred_train, pred_test = evaluate_regression(
@@ -542,43 +558,31 @@ for alpha in RIDGE_ALPHAS:
     print(f"\nМетрики {model_name}:")
     print(metrics_df)
 
-plt.figure(figsize=(10, 6))
-plt.scatter(X_train[most_related_feature], y_train, alpha=0.5, label="Train actual", marker="o")
-plt.scatter(X_test[most_related_feature], y_test, alpha=0.5, label="Test actual", marker="s")
-
-for model_name, (pred_train, pred_test) in ridge_predictions.items():
-    sort_idx = np.argsort(X_train[most_related_feature].values)
-    plt.plot(
-        X_train[most_related_feature].values[sort_idx],
-        pred_train[sort_idx],
-        linewidth=2,
-        label=f"{model_name} train"
+    plot_predictions_scatter(
+        X_train[most_related_feature].values,
+        X_test[most_related_feature].values,
+        y_train.values,
+        y_test.values,
+        pred_train,
+        pred_test,
+        feature_name=most_related_feature,
+        target_name=TARGET_COLUMN,
+        title=f"2.3 {model_name}: реальні значення і прогнози",
+        filename=f"lab3_{model_name.lower()}_scatter.png"
     )
 
-plt.title("Ridge: порівняння прогнозів для різних alpha")
-plt.xlabel(most_related_feature)
-plt.ylabel(TARGET_COLUMN)
-plt.legend(fontsize=8)
-plt.grid(True)
-save_plot("lab3_netflix_ridge_scatter.png")
-plt.show()
-
 print_conclusion(
-    "Ridge-регресія дозволяє перевірити, як регуляризація впливає на стабільність коефіцієнтів і якість прогнозування."
+    "Побудовано три моделі Ridge: з параметрами за замовчуванням, alpha=10 та alpha=100."
 )
 
 
-# ============================================================
-# 2.4 ГРЕБЕНЕВА РЕГРЕСІЯ З ПЕРЕТВОРЕННЯМ ЗМІННИХ
-# ============================================================
 print_title("2.4 ГРЕБЕНЕВА РЕГРЕСІЯ З ПЕРЕТВОРЕННЯМ ЗМІННИХ")
 
 ridge_t_metrics_all = {}
 ridge_t_predictions = {}
 
-for alpha in RIDGE_ALPHAS:
-    model_name = f"Ridge_transform_alpha_{alpha}"
-    model = Ridge(alpha=alpha)
+for model_name, model in RIDGE_MODELS:
+    transformed_name = model_name + "_transform"
     model.fit(X_train_t, y_train_t)
 
     metrics_df, pred_train, pred_test = evaluate_transformed_model(
@@ -587,116 +591,92 @@ for alpha in RIDGE_ALPHAS:
         y_train.values, y_test.values, y_pt
     )
 
-    ridge_t_metrics_all[model_name] = metrics_df
-    ridge_t_predictions[model_name] = (pred_train, pred_test)
+    ridge_t_metrics_all[transformed_name] = metrics_df
+    ridge_t_predictions[transformed_name] = (pred_train, pred_test)
 
-    print(f"\nМетрики {model_name}:")
+    print(f"\nМетрики {transformed_name}:")
     print(metrics_df)
 
-plt.figure(figsize=(10, 6))
-plt.scatter(X_train[most_related_feature], y_train, alpha=0.5, label="Train actual", marker="o")
-plt.scatter(X_test[most_related_feature], y_test, alpha=0.5, label="Test actual", marker="s")
-
-for model_name, (pred_train, pred_test) in ridge_t_predictions.items():
-    sort_idx = np.argsort(X_train[most_related_feature].values)
-    plt.plot(
-        X_train[most_related_feature].values[sort_idx],
-        pred_train[sort_idx],
-        linewidth=2,
-        label=f"{model_name} train"
+    plot_predictions_scatter(
+        X_train[most_related_feature].values,
+        X_test[most_related_feature].values,
+        y_train.values,
+        y_test.values,
+        pred_train,
+        pred_test,
+        feature_name=most_related_feature,
+        target_name=TARGET_COLUMN,
+        title=f"2.4 {transformed_name}: реальні значення і прогнози",
+        filename=f"lab3_{transformed_name.lower()}_scatter.png"
     )
 
-plt.title("Ridge + transform: порівняння прогнозів для різних alpha")
-plt.xlabel(most_related_feature)
-plt.ylabel(TARGET_COLUMN)
-plt.legend(fontsize=8)
-plt.grid(True)
-save_plot("lab3_netflix_ridge_transform_scatter.png")
-plt.show()
-
 print_conclusion(
-    "Поєднання регуляризації і перетворення змінних дає змогу оцінити, чи покращується узагальнювальна здатність моделі."
+    "Побудовано три Ridge-моделі після перетворення X та y до розподілу, близького до нормального."
 )
 
 
-# ============================================================
-# 2.5 СУКУПНЕ ПОРІВНЯННЯ МЕТРИК
-# ============================================================
 print_title("2.5 СУКУПНЕ ПОРІВНЯННЯ МЕТРИК")
 
 all_results = []
 
-for split_name, row in linreg_metrics.iterrows():
-    all_results.append({
-        "experiment": "LinearRegression",
-        "split": split_name,
-        **row.to_dict()
-    })
-
-for split_name, row in linreg_t_metrics.iterrows():
-    all_results.append({
-        "experiment": "LinearRegression + transform",
-        "split": split_name,
-        **row.to_dict()
-    })
+add_metrics_to_list(all_results, "LinearRegression", linreg_metrics)
+add_metrics_to_list(all_results, "LinearRegression_transform", linreg_t_metrics)
 
 for exp_name, metrics_df in ridge_metrics_all.items():
-    for split_name, row in metrics_df.iterrows():
-        all_results.append({
-            "experiment": exp_name,
-            "split": split_name,
-            **row.to_dict()
-        })
+    add_metrics_to_list(all_results, exp_name, metrics_df)
 
 for exp_name, metrics_df in ridge_t_metrics_all.items():
-    for split_name, row in metrics_df.iterrows():
-        all_results.append({
-            "experiment": exp_name,
-            "split": split_name,
-            **row.to_dict()
-        })
+    add_metrics_to_list(all_results, exp_name, metrics_df)
 
 results_df = pd.DataFrame(all_results)
 results_df = results_df.set_index(["experiment", "split"]).sort_index()
 
-print("Спільний датафрейм метрик:")
+print("Усі метрики:")
 print(results_df)
 
-styled_results = (
-    results_df.style
-    .background_gradient(cmap="RdYlGn", subset=["R2_score", "D2_absolute_error"])
-    .background_gradient(cmap="RdYlGn_r", subset=["MAE", "MSLE"])
+# 1) Абсолютні метрики
+absolute_metrics_df = results_df[["MAE", "MSLE", "MaxError"]].copy()
+
+# 2) Відносні метрики
+relative_metrics_df = results_df[["R2_score", "D2_absolute_error"]].copy()
+
+print("\nАбсолютні метрики:")
+print(absolute_metrics_df)
+
+print("\nВідносні метрики:")
+print(relative_metrics_df)
+
+# Стилізація
+absolute_styled = (
+    absolute_metrics_df.style
+    .background_gradient(cmap="RdYlGn_r")
     .format("{:.6f}")
 )
 
-styled_results.to_html("lab3_netflix_metrics_comparison.html")
-results_df.to_csv("lab3_netflix_metrics_comparison.csv", encoding="utf-8-sig")
-
-print("\nФайли з метриками збережено:")
-print("- lab3_netflix_metrics_comparison.html")
-print("- lab3_netflix_metrics_comparison.csv")
-
-plt.figure(figsize=(14, 6))
-results_reset = results_df.reset_index()
-sns.barplot(
-    data=results_reset[results_reset["split"] == "test"],
-    x="experiment",
-    y="R2_score"
+relative_styled = (
+    relative_metrics_df.style
+    .background_gradient(cmap="RdYlGn")
+    .format("{:.6f}")
 )
-plt.title("Порівняння R² на тестовій вибірці")
-plt.xlabel("Модель")
-plt.ylabel("R²")
-plt.xticks(rotation=45, ha="right")
-save_plot("lab3_netflix_test_r2.png")
-plt.show()
+
+# Збереження
+absolute_metrics_df.to_csv("lab3_absolute_metrics.csv", encoding="utf-8-sig")
+relative_metrics_df.to_csv("lab3_relative_metrics.csv", encoding="utf-8-sig")
+
+with open("lab3_absolute_metrics.html", "w", encoding="utf-8") as f:
+    f.write(absolute_styled.to_html())
+
+with open("lab3_relative_metrics.html", "w", encoding="utf-8") as f:
+    f.write(relative_styled.to_html())
+
+print("\nФайли збережено:")
+print("- lab3_absolute_metrics.csv")
+print("- lab3_relative_metrics.csv")
+print("- lab3_absolute_metrics.html")
+print("- lab3_relative_metrics.html")
 
 print_conclusion(
-    "Зведена таблиця дозволяє порівняти всі експерименти одночасно. Для R² та D² більші значення кращі, а для MAE і MSLE — менші."
+    "Створено два окремі датафрейми: один для абсолютних метрик, другий — для відносних. "
+    "Для відносних метрик кращими є більші значення, для абсолютних — менші."
 )
 
-
-# ============================================================
-# ЗАВЕРШЕННЯ
-# ============================================================
-print_title("РОБОТУ ЗАВЕРШЕНО")
-print("Усі пункти лабораторної роботи №3 виконані успішно.")
