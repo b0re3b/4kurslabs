@@ -1,0 +1,143 @@
+
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Відносні метрики моделей</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 30px;
+                background-color: #ffffff;
+                color: #222222;
+            }
+            h1 {
+                margin-bottom: 20px;
+            }
+            table {
+                border-collapse: collapse;
+                width: 100%;
+            }
+            th, td {
+                border: 1px solid #cccccc;
+                padding: 8px 10px;
+                text-align: center;
+            }
+            th {
+                background-color: #f2f2f2;
+            }
+            tr:nth-child(even) {
+                background-color: #fafafa;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Відносні метрики моделей</h1>
+        <table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th></th>
+      <th>R2_score</th>
+      <th>D2_absolute_error</th>
+    </tr>
+    <tr>
+      <th>experiment</th>
+      <th>split</th>
+      <th></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th rowspan="2" valign="top">LinearRegression</th>
+      <th>test</th>
+      <td>0.067224</td>
+      <td>0.018682</td>
+    </tr>
+    <tr>
+      <th>train</th>
+      <td>0.082884</td>
+      <td>0.020564</td>
+    </tr>
+    <tr>
+      <th rowspan="2" valign="top">LinearRegression_transform</th>
+      <th>test</th>
+      <td>0.076402</td>
+      <td>0.028730</td>
+    </tr>
+    <tr>
+      <th>train</th>
+      <td>0.093196</td>
+      <td>0.032472</td>
+    </tr>
+    <tr>
+      <th rowspan="2" valign="top">Ridge_alpha_10</th>
+      <th>test</th>
+      <td>0.124131</td>
+      <td>0.058517</td>
+    </tr>
+    <tr>
+      <th>train</th>
+      <td>0.131256</td>
+      <td>0.051882</td>
+    </tr>
+    <tr>
+      <th rowspan="2" valign="top">Ridge_alpha_100</th>
+      <th>test</th>
+      <td>0.123122</td>
+      <td>0.057767</td>
+    </tr>
+    <tr>
+      <th>train</th>
+      <td>0.131034</td>
+      <td>0.051738</td>
+    </tr>
+    <tr>
+      <th rowspan="2" valign="top">Ridge_alpha_100_transform</th>
+      <th>test</th>
+      <td>0.138257</td>
+      <td>0.068151</td>
+    </tr>
+    <tr>
+      <th>train</th>
+      <td>0.144934</td>
+      <td>0.063572</td>
+    </tr>
+    <tr>
+      <th rowspan="2" valign="top">Ridge_alpha_10_transform</th>
+      <th>test</th>
+      <td>0.138534</td>
+      <td>0.068948</td>
+    </tr>
+    <tr>
+      <th>train</th>
+      <td>0.145135</td>
+      <td>0.063881</td>
+    </tr>
+    <tr>
+      <th rowspan="2" valign="top">Ridge_default</th>
+      <th>test</th>
+      <td>0.124269</td>
+      <td>0.058620</td>
+    </tr>
+    <tr>
+      <th>train</th>
+      <td>0.131261</td>
+      <td>0.051894</td>
+    </tr>
+    <tr>
+      <th rowspan="2" valign="top">Ridge_default_transform</th>
+      <th>test</th>
+      <td>0.138548</td>
+      <td>0.069023</td>
+    </tr>
+    <tr>
+      <th>train</th>
+      <td>0.145137</td>
+      <td>0.063897</td>
+    </tr>
+  </tbody>
+</table>
+    </body>
+    </html>
+    
